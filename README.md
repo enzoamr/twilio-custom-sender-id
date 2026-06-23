@@ -16,9 +16,19 @@ Copiez `.env.example` en `.env` et renseignez vos identifiants Twilio
 (disponibles sur https://console.twilio.com) :
 
 ```bash
-cp .env.example .env
+cp .env.example .env      # Windows : copy .env.example .env
 ```
 
+Deux méthodes d'authentification possibles (choisissez-en une) :
+
+**Méthode 1 — API Key (recommandée, révocable) :**
+```dotenv
+TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxx
+TWILIO_API_KEY_SID=SKxxxxxxxxxxxxxxxxxxxx
+TWILIO_API_KEY_SECRET=xxxxxxxxxxxxxxxxxxxx
+```
+
+**Méthode 2 — Auth Token (classique) :**
 ```dotenv
 TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxx
 TWILIO_AUTH_TOKEN=xxxxxxxxxxxxxxxxxxxxxxxx

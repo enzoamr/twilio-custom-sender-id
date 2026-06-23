@@ -247,41 +247,75 @@ def validate_sender_id(raw: str) -> tuple[bool, str, str]:
 # ===========================================================================
 # Gestion des identifiants Twilio
 # ===========================================================================
-def load_credentials() -> tuple[Optional[str], Optional[str]]:
-    """Charge SID/token depuis .env puis variables d'environnement."""
+def load_credentials() -> dict[str, Optional[str]]:
+    """Charge les identifiants depuis .env puis les variables d'environnement.
+
+    Deux méthodes d'authentification sont supportées :
+    - API Key (recommandée) : TWILIO_API_KEY_SID (SK...) + TWILIO_API_KEY_SECRET
+      + TWILIO_ACCOUNT_SID (AC...)
+    - Auth Token (classique) : TWILIO_ACCOUNT_SID (AC...) + TWILIO_AUTH_TOKEN
+    """
     if os.path.exists(ENV_PATH):
         load_dotenv(ENV_PATH)
-    sid = os.getenv("TWILIO_ACCOUNT_SID")
-    token = os.getenv("TWILIO_AUTH_TOKEN")
-    return sid, token
+    return {
+        "account_sid": os.getenv("TWILIO_ACCOUNT_SID"),
+        "auth_token": os.getenv("TWILIO_AUTH_TOKEN"),
+        "api_key_sid": os.getenv("TWILIO_API_KEY_SID"),
+        "api_key_secret": os.getenv("TWILIO_API_KEY_SECRET"),
+    }
 
 
-def setup_credentials_wizard() -> tuple[str, str]:
+def setup_credentials_wizard() -> dict[str, Optional[str]]:
     """Assistant de configuration : demande et sauvegarde les identifiants."""
     console.print(
         Panel(
             "Identifiants Twilio introuvables.\n\n"
-            "Récupérez-les sur [link]https://console.twilio.com[/link] "
-            "(section [bold]Account Info[/bold]).\n"
-            "Ils seront enregistrés dans un fichier [bold].env[/bold] local "
-            "(ajoutez-le à votre .gitignore).",
+            "Récupérez-les sur [link]https://console.twilio.com[/link].\n\n"
+            "[bold]Méthode 1 — API Key[/bold] (recommandée, révocable) :\n"
+            "  · Account SID  (AC...) — sur le dashboard\n"
+            "  · API Key SID  (SK...) + secret — Account > API keys & tokens\n\n"
+            "[bold]Méthode 2 — Auth Token[/bold] (classique) :\n"
+            "  · Account SID  (AC...) + Auth Token — sur le dashboard\n\n"
+            "Les valeurs seront enregistrées dans un fichier [bold].env[/bold] local.",
             title="🔐  Configuration",
             border_style="yellow",
         )
     )
-    sid = Prompt.ask("[cyan]TWILIO_ACCOUNT_SID[/cyan]").strip()
-    token = Prompt.ask("[cyan]TWILIO_AUTH_TOKEN[/cyan]", password=True).strip()
+    use_api_key = Confirm.ask(
+        "Utiliser une API Key (SK...) ? [dim](Non = Auth Token)[/dim]", default=True
+    )
+
+    account_sid = Prompt.ask("[cyan]TWILIO_ACCOUNT_SID[/cyan] (AC...)").strip()
+    creds: dict[str, Optional[str]] = {
+        "account_sid": account_sid,
+        "auth_token": None,
+        "api_key_sid": None,
+        "api_key_secret": None,
+    }
+
+    if use_api_key:
+        creds["api_key_sid"] = Prompt.ask("[cyan]TWILIO_API_KEY_SID[/cyan] (SK...)").strip()
+        creds["api_key_secret"] = Prompt.ask(
+            "[cyan]TWILIO_API_KEY_SECRET[/cyan]", password=True
+        ).strip()
+    else:
+        creds["auth_token"] = Prompt.ask(
+            "[cyan]TWILIO_AUTH_TOKEN[/cyan]", password=True
+        ).strip()
 
     if Confirm.ask("Sauvegarder dans .env ?", default=True):
-        # Crée le fichier s'il n'existe pas
         if not os.path.exists(ENV_PATH):
             open(ENV_PATH, "a").close()
-        set_key(ENV_PATH, "TWILIO_ACCOUNT_SID", sid)
-        set_key(ENV_PATH, "TWILIO_AUTH_TOKEN", token)
+        set_key(ENV_PATH, "TWILIO_ACCOUNT_SID", creds["account_sid"] or "")
+        if use_api_key:
+            set_key(ENV_PATH, "TWILIO_API_KEY_SID", creds["api_key_sid"] or "")
+            set_key(ENV_PATH, "TWILIO_API_KEY_SECRET", creds["api_key_secret"] or "")
+        else:
+            set_key(ENV_PATH, "TWILIO_AUTH_TOKEN", creds["auth_token"] or "")
         console.print(f"[green]✓[/green] Identifiants enregistrés dans {ENV_PATH}")
         _ensure_gitignore()
 
-    return sid, token
+    return creds
 
 
 def _ensure_gitignore() -> None:
@@ -302,15 +336,33 @@ def _ensure_gitignore() -> None:
         pass  # non bloquant
 
 
+def _build_client(creds: dict[str, Optional[str]]) -> Optional[Client]:
+    """Construit un client Twilio selon les identifiants disponibles, ou None."""
+    account_sid = creds.get("account_sid")
+    # Méthode API Key : Client(api_key_sid, api_key_secret, account_sid)
+    if creds.get("api_key_sid") and creds.get("api_key_secret") and account_sid:
+        return Client(
+            creds["api_key_sid"], creds["api_key_secret"], account_sid
+        )
+    # Méthode Auth Token : Client(account_sid, auth_token)
+    if account_sid and creds.get("auth_token"):
+        return Client(account_sid, creds["auth_token"])
+    return None
+
+
 def get_client() -> Client:
     """Construit un client Twilio authentifié, avec assistant si besoin."""
-    sid, token = load_credentials()
-    if not sid or not token:
-        sid, token = setup_credentials_wizard()
-    if not sid or not token:
-        console.print("[red]Identifiants manquants. Abandon.[/red]")
+    client = _build_client(load_credentials())
+    if client is None:
+        client = _build_client(setup_credentials_wizard())
+    if client is None:
+        console.print(
+            "[red]Identifiants incomplets.[/red] Il faut soit "
+            "[cyan]Account SID + API Key SID + secret[/cyan], soit "
+            "[cyan]Account SID + Auth Token[/cyan]. Abandon."
+        )
         sys.exit(1)
-    return Client(sid, token)
+    return client
 
 
 # ===========================================================================
